@@ -3,7 +3,7 @@ import time
 
 
 # Protocol information
-PROTOCOL_ID = b'Violet Ascending'       
+PROTOCOL_ID = b'VAP1'       
 VERSION = 1                 
 HEADER_FORMAT = "!4s B B I I d H"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
