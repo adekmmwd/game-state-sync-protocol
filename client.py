@@ -4,6 +4,14 @@ import uuid
 import time
 from collections import deque
 from enum import Enum, auto
+from header import (
+    make_packet, parse_packet,
+    MSG_JOIN_REQ, MSG_JOIN_ACK,
+    MSG_READY_REQ, MSG_READY_ACK,
+    MSG_SNAPSHOT_FULL, MSG_SNAPSHOT_DELTA,
+    MSG_SNAPSHOT_ACK, MSG_ACQUIRE_EVENT,
+    MSG_END_GAME
+)
 
 
 class ClientState(Enum):
@@ -59,16 +67,22 @@ def transition(self, new_state):
     self.recent_transition = 1
 
 
-def send(self, msg_dict):
-    self.sock.sendto(json.dumps(msg_dict).encode(), self.server_addr)
+def send_packet(self, msg_type, payload=b"", snapshot_id=0, seq_num=0):
+    packet = make_packet(msg_type, payload=payload, snapshot_id=snapshot_id, seq_num=seq_num)
+    self.sock.sendto(packet, self.server_addr)
 
 
-def recv(self):
+def recv_packet(self):
+    """Receive and parse a packet, returns (header, payload) or (None, None)."""
     try:
         data, _ = self.sock.recvfrom(4096)
-        return json.loads(data.decode())
+        header, payload = parse_packet(data)
+        return header, payload
     except socket.timeout:
-        return None
+        return None, None
+    except Exception as e:
+        print(f"⚠️ Error while parsing packet: {e}")
+        return None, None
 
 
 def run(self):
@@ -90,101 +104,175 @@ def run(self):
 
 
 def handle_join(self):
-    curr_time = time.time()
+    now = time.time()
 
-    if curr_time - self.last_send_time >= START_TIMEOUT or self.last_send_time == 0:
-
-        join_req = {"type": "join_req", "client_id": self.headers.id}
-        self.send(join_req)
-        print("Sent join request")
-        self.last_send_time = curr_time
-
-        msg = self.recv()
-        if msg and msg["type"] == "join_ack":
-            print("recieved join ack")
-            self.transition(ClientState.WAIT_FOR_READY)
-
-
-def handle_ready(self):
-    curr_time = time.time()
-
-    if curr_time - self.last_send_time >= READY_RESEND or self.recent_transition == 1:
-
+    # Send join request periodically
+    if self.recent_transition or now - self.last_send_time >= JOIN_RESEND:
         self.recent_transition = 0
-        ready_req = {"type": "ready_req", "client_id": self.headers.id}
-        self.send(ready_req)
-        print("→ Sent Ready")
-        self.last_send_time = curr_time
+        # encode payload with client ID, IP, and port
+        ip, port = self.sock.getsockname()
+        payload = f"{ip}|{self.headers.id}|{port}".encode()
+        self.send_packet(MSG_JOIN_REQ, payload)
+        print("Sent JOIN_REQ")
+        self.last_send_time = now
 
-        msg = self.recv()
-        if msg["type"] == "ready_ack":
-            print("ready ACK Received")
+    header, payload = self.recv_packet()
+    if header and header["msg_type"] == MSG_JOIN_ACK:
+        print("✓ JOIN_ACK received. Moving to READY.")
+        self.transition(ClientState.WAIT_FOR_READY)
+
+    def handle_ready(self):
+        now = time.time()
+
+        if self.recent_transition or now - self.last_send_time >= READY_RESEND:
+            self.recent_transition = 0
+            payload = f"{self.headers.id}".encode()
+            self.send_packet(MSG_READY_REQ, payload)
+            print("→ Sent READY_REQ")
+            self.last_send_time = now
+
+        header, payload = self.recv_packet()
+        if header and header["msg_type"] == MSG_READY_ACK:
+            print("✓ READY_ACK received. Waiting for start snapshot.")
             self.transition(ClientState.WAIT_FOR_STARTGAME)
 
 
 def handle_start_game(self):
-    msg = self.recv()
-    curr_time = time.time()
+    header, payload = self.recv_packet()
+    now = time.time()
 
-    if msg and msg["type"] == "Snapshot_full":
-        snapshot_id = msg.get["snapshot_id"]
-        self.last_snapshot_id = msg["snapshot_id"]
-        print(f"full snapshot ID: {snapshot_id} Recieved")
-        ack_msg = {
-            "type": "ack",
-            "client_id": self.headers.id,
-            "snapshot_id": snapshot_id,
-        }
-        self.send(ack_msg)
+    if header and header["msg_type"] == MSG_SNAPSHOT_FULL:
+        snap_id = header["snapshot_id"]
+        self.last_snapshot_id = snap_id
+        print(f"✓ Received full snapshot #{snap_id}")
+        self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snap_id)
         self.transition(ClientState.IN_GAME_LOOP)
 
-    elif curr_time - self.last_acquire_time > START_TIMEOUT or self.recent_transition == 1:
+    elif now - self.last_send_time >= START_TIMEOUT or self.recent_transition == 1:
+        # Optional re-request logic
         self.recent_transition = 0
-        ready_msg = {"type": "ready_req", "client_id": self.headers.id}
-        self.send(ready_msg)
-        print("Waiting for full Snapshot")
-        self.last_send_time = curr_time
+        payload = f"{self.headers.id}".encode()
+        self.send_packet(MSG_READY_REQ, payload)
+        print("Waiting for full snapshot...")
+        self.last_send_time = now
+
 
 
 def handle_game_loop(self):
-    msg = self.recv()
-    curr_time = time.time()
-    msg_type = msg.get["type"]
-    if msg_type in ("Snapshot_full", "snapshot_delta"):
-        snapshot_id = msg.get("snapshot_id")
-        payload = msg.get("data", {})
-        if snapshot_id <= self.last_snapshot_id or snapshot_id - self.last_snapshot_id > 1:
-            print(f"⚠️ Ignored outdated snapshot #{snapshot_id} (last {self.last_snapshot_id})")
+    """
+    Main in-game state handler.
+    Receives multiple packets if available,
+    applies them in order, and acknowledges each snapshot.
+    """
+    buffer = deque()
 
-        ##
-        # update snapshot or delta to game state here
-        ##
-        else:
-            self.last_snapshot_id = snapshot_id
-            self.last_ack_time = curr_time
+    # Step 1: drain all available packets into buffer
+    while True:
+        try:
+            header, payload = self.recv_packet(block=False)
+            if header:
+                buffer.append((header, payload))
+        except TimeoutError:
+            break
+        except Exception as e:
+            # recv_packet should raise socket.timeout or custom TimeoutError
+            break
 
-            ack_msg = {"type": "ack", "client_id": self.headers.id, "snapshot_id": snapshot_id}
-            self.send(ack_msg)
-            print(f"✔️ Applied snapshot #{snapshot_id} and sent ACK")
-
-    ##
-    ##acquire cell logic here
-    ##
-
-    elif msg_type == "GAME_OVER":
-        print("Game Over message received")
-        self.transition(ClientState.GAME_OVER)
+    # Nothing received this tick
+    if not buffer:
         return
+
+    # Step 2: process packets in order received
+    while buffer:
+        header, payload = buffer.popleft()
+        now = time.time()
+        msg_type = header["msg_type"]
+        snapshot_id = header["snapshot_id"]
+
+        # ---- Discard outdated or duplicate ----
+        if msg_type in (MSG_SNAPSHOT_FULL, MSG_SNAPSHOT_DELTA):
+            if snapshot_id <= self.last_snapshot_id:
+                print(f"⚠️ Ignored outdated snapshot #{snapshot_id} (last={self.last_snapshot_id})")
+                continue
+
+        # ---- Handle Full Snapshot ----
+        if msg_type == MSG_SNAPSHOT_FULL:
+            try:
+                state = json.loads(payload.decode())
+            except Exception:
+                print("⚠️ Invalid full snapshot payload, skipping")
+                continue
+
+            self.apply_full_snapshot(state)
+            print(f"✓ Applied full snapshot #{snapshot_id}")
+
+            self.last_snapshot_id = snapshot_id
+            self.last_ack_time = now
+            self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snapshot_id)
+
+        # ---- Handle Delta Snapshot ----
+        elif msg_type == MSG_SNAPSHOT_DELTA:
+            try:
+                delta = json.loads(payload.decode())
+            except Exception:
+                print("⚠️ Invalid delta payload, skipping")
+                continue
+
+            self.apply_delta_snapshot(delta)
+            print(f"✓ Applied delta snapshot #{snapshot_id}")
+
+            self.last_snapshot_id = snapshot_id
+            self.last_ack_time = now
+            self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snapshot_id)
+
+        # ---- Handle Game Over ----
+        elif msg_type == MSG_END_GAME:
+            print("🏁 Game Over message received")
+            self.transition(ClientState.GAME_OVER)
+            return
+
+        # ---- Other message types ----
+        else:
+            print(f"⚠️ Unrecognized message type {msg_type}")
+            continue
+
+
 
 
 def handle_game_over(self):
-    print("🏁 Game over. Cleaning up...")
-    over_ack = {"type": "game_over_ack", "client_id": self.headers.id}
-    self.send(over_ack)
+    """
+    Handles the GAME_OVER state.
+    Sends final acknowledgment, optionally receives leaderboard,
+    then closes the connection and stops the client.
+    """
+    print("🏁 Game Over! Finalizing session...")
+
+    # Send final ACK to server
+    self.send_packet(MSG_END_GAME, payload=b"ACK")
+    print("✔️ Sent game over acknowledgment to server.")
+
+    # Close socket and stop loop
     self.sock.close()
     self.running = False
-    print("🔒 Connection closed.")
+    print("🔒 Client session ended.")
 
+
+def apply_full_snapshot(self, state):
+    """Replace full local game state with the received one."""
+    self.game_state = state
+    print(f"[FULL] Replaced entire state with snapshot #{state.get('tick', '?')}")
+
+def apply_delta_snapshot(self, delta):
+    """Apply incremental updates to the current game state."""
+    if not hasattr(self, 'game_state'):
+        print("⚠️ No base state found, ignoring delta")
+        return
+    changes = delta.get("changes", [])
+    for change in changes:
+        x, y = change["x"], change["y"]
+        new_val = change["new"]
+        self.game_state["grid"][y][x] = new_val
+    print(f"[DELTA] Applied {len(changes)} updates (tick={delta.get('tick', '?')})")
 
 
 def main():
