@@ -185,7 +185,8 @@ class ClientFSM:
                 state = json.loads(payload.decode())
                 self.apply_full_snapshot(state)
                 print(f"✓ Applied full snapshot #{snapshot_id}")
-
+                print(
+                    f"SNAPSHOT recv_time={time.time()} server_ts={header['timestamp']} snapshot_id={snapshot_id} seq={header['seq_num']}")
                 self.last_snapshot_id = snapshot_id
                 self.last_ack_time = now
                 self.pending_acquire = None
@@ -195,7 +196,8 @@ class ClientFSM:
                 delta = json.loads(payload.decode())
                 self.apply_delta_snapshot(delta)
                 print(f"✓ Applied delta snapshot #{snapshot_id}")
-
+                print(
+                    f"SNAPSHOT recv_time={time.time()} server_ts={header['timestamp']} snapshot_id={snapshot_id} seq={header['seq_num']}")
                 self.last_snapshot_id = snapshot_id
                 self.last_ack_time = now
                 self.pending_acquire = None
