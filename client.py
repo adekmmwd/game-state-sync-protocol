@@ -64,7 +64,7 @@ class ClientFSM:
         self.recent_transition = 0
         self.pending_acquire = None
         self.running = True
-        self.sock.settimeout(TICK)
+        self.sock.setblocking(False)
 
     def transition(self, new_state):
         print(f" Transition: {self.state.name} → {new_state.name}")
@@ -81,7 +81,7 @@ class ClientFSM:
             data, _ = self.sock.recvfrom(4096)
             header, payload = parse_packet(data)
             return header, payload
-        except socket.timeout:
+        except (socket.timeout, BlockingIOError):
             if block:
                 return None, None
             else:
@@ -105,7 +105,7 @@ class ClientFSM:
             elif self.state == ClientState.GAME_OVER:
                 self.handle_game_over()
 
-            #time.sleep(TICK)
+            time.sleep(0.001)
 
     def handle_join(self):
         now = time.time()
