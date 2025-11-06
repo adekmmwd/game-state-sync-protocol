@@ -196,7 +196,7 @@ class GameServer:
         time_condition = (time_elapsed >= self.join_time_gap_allowed and len(self.players) > 1)
         
         # Condition 2: Half the players are ready (and we have at least 1)
-        ready_condition = (len(self.players) > 0 and self.ready_count >= len(self.players) / 2)
+        ready_condition = (len(self.players) > 1 and self.ready_count >= len(self.players) / 2)
 
         if time_condition or ready_condition:
             print("Conditions met, moving to INIT state.")
