@@ -1,9 +1,9 @@
 === Performance Summary ===
-Samples: 105
-Latency mean=0.65 stdev=0.31
-Jitter  mean=0.39 stdev=0.24
+Samples: 295
+Latency mean=0.60 stdev=0.30
+Jitter  mean=0.28 stdev=0.25
 
-Client 1: 19.77 cycles/sec
+Client 1: 19.66 cycles/sec
 
-Average cycles/sec per client: 19.77
-Average CPU usage: 7.70%
+Average cycles/sec per client: 19.66
+Average CPU usage: 1.60%
