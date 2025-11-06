@@ -262,7 +262,7 @@ class GameServer:
         old_arr = np.array(old_grid)
         new_arr = np.array(new_grid)
         diff_indices = np.argwhere(old_arr != new_arr)
-        delta_changes = [(int(y), int(x), new_arr[y, x]) for y, x in diff_indices]
+        delta_changes = [(int(y), int(x), int(new_arr[y, x])) for y, x in diff_indices]
 
         # Only store delta if there *were* changes
         if delta_changes:
