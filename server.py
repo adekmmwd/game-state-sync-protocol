@@ -3,7 +3,6 @@ from socket import *
 import dataclasses
 import enum
 import time
-import uuid
 import json
 import numpy as np
 from header import *
@@ -11,7 +10,7 @@ from header import *
 
 @dataclasses.dataclass
 class Player:
-    id: str
+    id: int
     address: tuple
     ready: bool = False
     last_update_time: float = 0
@@ -142,7 +141,7 @@ class GameServer:
             self.server_socket.sendto(ack_packet, addr)
             return
 
-        new_id = str(uuid.uuid4())[:8]
+        new_id = len(self.players) + 1
         player = Player(id=new_id, address=addr)
         self.players[addr] = player
         print(f"Player {new_id} joined from {addr}")
@@ -240,7 +239,7 @@ class GameServer:
             self.last_broadcast_time = current_time  # Reset timer
 
         # --- 2. Check for Game Over Condition ---
-        # (This check can be moved into broadcast_snapshots if preferred)
+       
         grid_flat = np.array(self.current_snapshot["grid"]).flatten()
         if np.all(grid_flat != 0):
             print("All cells claimed — ending game.")
@@ -263,7 +262,7 @@ class GameServer:
         old_arr = np.array(old_grid)
         new_arr = np.array(new_grid)
         diff_indices = np.argwhere(old_arr != new_arr)
-        delta_changes = [(int(y), int(x), int(new_arr[y, x])) for y, x in diff_indices]
+        delta_changes = [(int(y), int(x), new_arr[y, x]) for y, x in diff_indices]
 
         # Only store delta if there *were* changes
         if delta_changes:
