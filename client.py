@@ -110,7 +110,7 @@ class ClientFSM:
         if self.recent_transition or now - self.last_send_time >= JOIN_RESEND:
             self.recent_transition = 0
             ip, port = self.sock.getsockname()
-            payload = f"{ip}|{self.headers.id}|{port}".encode()
+            payload = f"{ip}|{port}".encode()
             self.send_packet(MSG_JOIN_REQ, payload)
             print("Sent JOIN_REQ")
             self.last_send_time = now
@@ -216,8 +216,8 @@ class ClientFSM:
         if int(now) % 10 == 0 and not self.pending_acquire:
             x, y = 5, 7
             ip, port = self.sock.getsockname()
-            payload_tuple = (ip, self.headers.id, port, x, y)
-            payload = json.dumps(payload_tuple).encode()
+            payload_dictionary = {"x": x, "y": y}
+            payload = json.dumps(payload_dictionary).encode()
 
             self.send_packet(MSG_ACQUIRE_EVENT, payload=payload)
             print(f"📦 Sent ACQUIRE event ({x},{y}) from {ip}:{port}")
@@ -254,7 +254,7 @@ class ClientFSM:
 
 
 def main():
-    server_address = ("127.0.0.1", 1234)
+    server_address = ("127.0.0.1", 8888)
     clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     clientSocket.settimeout(TICK)
 
