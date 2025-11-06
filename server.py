@@ -114,7 +114,7 @@ class GameServer:
             # Route based on current server state
             if self.state == ServerState.WAITING_FOR_JOIN:
                 if msg_type == MSG_JOIN_REQ:
-                    self.handle_join_req(addr, header, payload)
+                    self.handle_join_req(addr)
                 elif msg_type == MSG_READY_REQ:
                     self.handle_ready_req(addr)
             
@@ -131,7 +131,7 @@ class GameServer:
 
     # --- Packet Handlers (Moved from async functions) ---
 
-    def handle_join_req(self, addr, header, payload):
+    def handle_join_req(self, addr):
         if addr in self.players:
             print(f"Ignoring duplicate join from {addr}")
             existing_player = self.players[addr]
@@ -175,7 +175,7 @@ class GameServer:
                 print(f"Player {player.id} acquired cell ({cell_x}, {cell_y})")
         #self.current_snapshot["timestamp"] = time.time()
 
-    def handle_snapshot_ack(self, addr, header,payload):
+    def handle_snapshot_ack(self, addr, header):
         snapshot_id = header["snapshot_id"]
 
         player = self.players.get(addr)
