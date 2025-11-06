@@ -198,6 +198,13 @@ class GameServer:
         # Condition 2: Half the players are ready (and we have at least 1)
         ready_condition = (len(self.players) > 2 and self.ready_count >= len(self.players) / 2)
 
+        for address, player in self.players.items():
+            if  not player.ready:
+                self.seq_num += 1
+                ack_packet = make_packet(MSG_READY_ACK, seq_num=self.seq_num)
+                self.server_socket.sendto(ack_packet, address)
+          
+
         if time_condition or ready_condition:
             print("Conditions met, moving to INIT state.")
             self.state = ServerState.WAITING_FOR_INIT
