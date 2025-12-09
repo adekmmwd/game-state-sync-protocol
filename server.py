@@ -167,8 +167,13 @@ class GameServer:
             self.server_socket.sendto(ack_packet, addr)
 
     def handle_acquire_event(self, addr, payload):
+
         payload_dict = json.loads(payload.decode())
         cell_x, cell_y = payload_dict["x"], payload_dict["y"]
+        
+        ack_payload=json.dumps({"x": cell_x,"y":cell_y}).encode()
+        ack_packet = make_packet(MSG_ACQUIRE_ACK, payload=ack_payload ,seq_num=self.seq_num)
+        self.server_socket.sendto(ack_packet,addr)
         player = self.players.get(addr)
 
         if player:

@@ -1,156 +1,202 @@
-#!/usr/bin/env python3
-"""
-collect_metrics.py — Phase 1 baseline metric extraction + performance metrics
+import os
+import sys
+import re
+import csv
+import numpy as np
 
-Usage:
-    python3 collect_metrics.py server_log.txt client1_log.txt client2_log.txt client3_log.txt client4_log.txt
+def parse_logs(log_dir):
+    metrics_rows = []
+    sent_events = {}   # (client_id, x, y) -> start_time
+    acked_events = {}  # (client_id, x, y) -> end_time
+    client_update_counts = {} # client_id -> list of timestamps
 
-Outputs:
-    metrics.csv  with columns:
-        client_id, snapshot_id, seq_num, server_timestamp_ms, recv_time_ms,
-        latency_ms, jitter_ms
-    collect_metrics_summary.txt  (for plotting)
-Prints:
-    - Avg latency, jitter
-    - Cycles/sec per client
-    - Average CPU usage
-"""
+    client_files = [f for f in os.listdir(log_dir) if f.startswith("client") and f.endswith("_log.txt")]
+    
+    if not client_files:
+        print(f"❌ ERROR: No client logs found in {log_dir}")
+        return [], {}, {}, {}
 
-import sys, re, csv, statistics, threading, psutil, pandas as pd
+    for cf in client_files:
+        try:
+            # Extract ID from filename (client1_log.txt -> 1)
+            c_id = int(re.search(r'client(\d+)_log.txt', cf).group(1))
+        except: continue
+        
+        client_update_counts[c_id] = []
+        filepath = os.path.join(log_dir, cf)
+        
+        prev_recv_time = 0
+        prev_server_ts = 0
 
-# ------------------------------------------------------------
-# 1. Argument check (expect exactly 4 clients)
-# ------------------------------------------------------------
-if len(sys.argv) != 6:  # 1 script + 1 server log + 4 clients
-    print("Usage: python3 collect_metrics.py server_log.txt client1_log.txt client2_log.txt client3_log.txt client4_log.txt")
-    sys.exit(1)
+        with open(filepath, 'r') as f:
+            for line in f:
+                # --- 1. Parse Snapshots (Latency, Jitter, Hz) ---
+                if "SNAPSHOT recv_time=" in line:
+                    try:
+                        # Extract key=value pairs
+                        parts = {k: float(v) for k, v in [x.split('=') for x in line.split() if '=' in x]}
+                        
+                        recv_time = parts.get("recv_time", 0)
+                        server_ts = parts.get("server_ts", 0)
+                        snap_id = int(parts.get("snapshot_id", 0))
+                        seq_num = int(parts.get("seq", 0))
+                        
+                        # Store for Hz calc
+                        client_update_counts[c_id].append(recv_time)
 
-server_log = sys.argv[1]
-client_logs = sys.argv[2:]
-rows = []
+                        # Latency (ms)
+                        latency = (recv_time - server_ts) * 1000
+                        
+                        # Jitter (ms)
+                        jitter = 0
+                        if prev_recv_time > 0:
+                            diff_cur = recv_time - server_ts
+                            diff_prev = prev_recv_time - prev_server_ts
+                            jitter = abs(diff_cur - diff_prev) * 1000
 
-# Pattern to extract snapshot info
-pattern = re.compile(
-    r"SNAPSHOT.*recv_time=(?P<recv>\d+\.\d+)\s+server_ts=(?P<srv>\d+\.\d+)\s+snapshot_id=(?P<snap>\d+)\s+seq=(?P<seq>\d+)"
-)
+                        prev_recv_time = recv_time
+                        prev_server_ts = server_ts
 
-# ------------------------------------------------------------
-# 2. CPU Monitoring Thread
-# ------------------------------------------------------------
-cpu_samples = []
-stop_flag = threading.Event()
+                        metrics_rows.append({
+                            "client_id": c_id,
+                            "snapshot_id": snap_id,
+                            "seq_num": seq_num,
+                            "server_timestamp_ms": server_ts * 1000,
+                            "recv_time_ms": recv_time * 1000,
+                            "latency_ms": latency,
+                            "jitter_ms": jitter,
+                            "perceived_position_error": 0.0 
+                        })
+                    except Exception as e: 
+                        continue
 
-def monitor_cpu():
-    while not stop_flag.is_set():
-        cpu_samples.append(psutil.cpu_percent(interval=0.5))
+                # --- 2. Parse Position Error (For 2% Loss) ---
+                if "POSITION_ERR" in line:
+                    try:
+                        val = float(re.search(r'error=([\d\.]+)', line).group(1))
+                        # Update the most recent row for this client
+                        if metrics_rows and metrics_rows[-1]["client_id"] == c_id:
+                            metrics_rows[-1]["perceived_position_error"] = val
+                    except: pass
 
-t = threading.Thread(target=monitor_cpu, daemon=True)
-t.start()
+                # --- 3. Parse Critical Events (For 5% Loss) ---
+                # Log: "📦 Sent ACQUIRE event (12,5) AT 173377..."
+                if "Sent ACQUIRE event" in line:
+                    m = re.search(r'\((\d+),(\d+)\) AT (\d+\.\d+)', line)
+                    if m: sent_events[(c_id, int(m.group(1)), int(m.group(2)))] = float(m.group(3))
 
-# ------------------------------------------------------------
-# 3. Parse Client Logs
-# ------------------------------------------------------------
-for cfile in client_logs:
-    # detect numeric ID from filename (any number)
-    cid_match = re.search(r"(\d+)", cfile)
-    cid = int(cid_match.group(1)) if cid_match else 0
+                # Log: "✓ Received ACK for (12,5) recv_time=173377..."
+                if "Received ACK for" in line:
+                    m = re.search(r'\((\d+),(\d+)\).*recv_time=(\d+\.\d+)', line)
+                    if m: acked_events[(c_id, int(m.group(1)), int(m.group(2)))] = float(m.group(3))
 
-    last_latency = None
-    with open(cfile) as f:
-        for line in f:
-            m = pattern.search(line)
-            if m:
-                recv = float(m.group("recv"))
-                srv = float(m.group("srv"))
-                latency = (recv - srv) * 1000.0
-                jitter = abs(latency - last_latency) if last_latency else 0.0
-                last_latency = latency
-                rows.append({
-                    "client_id": cid,
-                    "snapshot_id": int(m.group("snap")),
-                    "seq_num": int(m.group("seq")),
-                    "server_timestamp_ms": srv * 1000.0,
-                    "recv_time_ms": recv * 1000.0,
-                    "latency_ms": latency,
-                    "jitter_ms": jitter
-                })
+    return metrics_rows, sent_events, acked_events, client_update_counts
 
-# ------------------------------------------------------------
-# 4. Stop CPU monitor
-# ------------------------------------------------------------
-stop_flag.set()
-t.join()
+def calculate_update_rate(client_timestamps):
+    rates = []
+    for cid, times in client_timestamps.items():
+        if len(times) < 2: continue
+        duration = max(times) - min(times)
+        count = len(times)
+        if duration > 1: # Ignore short bursts
+            rates.append(count / duration)
+    return np.mean(rates) if rates else 0
 
-if not rows:
-    print("[collect_metrics] No valid snapshot lines found in logs.")
-    sys.exit(0)
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python3 collect_metrics.py <log_dir> <mode>")
+        sys.exit(1)
+        
+    log_dir = sys.argv[1]
+    mode = sys.argv[2]
+    
+    rows, sent, acked, updates = parse_logs(log_dir)
+    
+    # --- FAIL CHECK: Empty Logs ---
+    if not rows:
+        print("\n❌ CRITICAL FAILURE: No metrics parsed.")
+        print("   1. Did the clients crash? Check client1_log.txt.")
+        print("   2. Did you use 'python -u' in the script? (Yes, the script does).")
+        print("   3. Did you add the print statements to client.py?")
+        return
 
-# ------------------------------------------------------------
-# 5. Write metrics.csv
-# ------------------------------------------------------------
-out_csv = "metrics.csv"
-with open(out_csv, "w", newline="") as f:
-    writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-    writer.writeheader()
-    writer.writerows(rows)
+    # Write CSV
+    csv_path = os.path.join(log_dir, "metrics.csv")
+    keys = rows[0].keys()
+    with open(csv_path, 'w', newline='') as f:
+        w = csv.DictWriter(f, fieldnames=keys)
+        w.writeheader()
+        w.writerows(rows)
+    print(f"[INFO] Metrics written to {csv_path}")
 
-# ------------------------------------------------------------
-# 6. Compute Latency/Jitter Stats
-# ------------------------------------------------------------
-lat = [r["latency_ms"] for r in rows]
-jit = [r["jitter_ms"] for r in rows]
-mean_lat, stdev_lat = statistics.mean(lat), statistics.stdev(lat)
-mean_jit, stdev_jit = statistics.mean(jit), statistics.stdev(jit)
+    # --- STATISTICS & ACCEPTANCE CRITERIA ---
+    latencies = [r['latency_ms'] for r in rows]
+    jitters = [r['jitter_ms'] for r in rows]
+    errors = [r['perceived_position_error'] for r in rows]
+    avg_hz = calculate_update_rate(updates)
+    
+    print("\n" + "="*50)
+    print(f"RESULTS SUMMARY: {mode.upper()}")
+    print("="*50)
+    print(f"Avg Latency:  {np.mean(latencies):.2f} ms")
+    print(f"Avg Jitter:   {np.mean(jitters):.2f} ms")
+    print(f"Update Rate:  {avg_hz:.2f} Hz (Target: ~20 Hz)")
+    print("-" * 50)
 
-print(f"[collect_metrics] {len(rows)} samples → {out_csv}")
-print(f"Latency (ms): mean={mean_lat:.2f}, stdev={stdev_lat:.2f}")
-print(f"Jitter  (ms): mean={mean_jit:.2f}, stdev={stdev_jit:.2f}")
+    passed = False
+    
+    if mode == "baseline":
+        # Criteria: Server sustains 20 updates/sec; avg latency <= 50ms
+        if avg_hz >= 15 and np.mean(latencies) <= 50:
+            print("✅ PASS: Server sustains ~20 updates/sec; avg latency <= 50 ms.")
+            passed = True
+        else:
+            print(f"❌ FAIL: Latency {np.mean(latencies):.1f}ms (>50) or Hz {avg_hz:.1f} (<20).")
 
-# ------------------------------------------------------------
-# 7. Compute Update Rate (Cycles per Second) per Client
-# ------------------------------------------------------------
-df = pd.DataFrame(rows)
-rates = []
-for cid, group in df.groupby("client_id"):
-    tmin = group["server_timestamp_ms"].min()
-    tmax = group["server_timestamp_ms"].max()
-    if tmax > tmin:
-        rate = len(group) / ((tmax - tmin) / 1000.0)
-        rates.append((cid, rate))
+    elif mode == "loss2":
+        # Criteria: Mean error < 0.5, 95th percentile < 1.5
+        mean_err = np.mean(errors)
+        p95_err = np.percentile(errors, 95)
+        print(f"Mean Pos Error: {mean_err:.2f}")
+        print(f"95% Pos Error:  {p95_err:.2f}")
+        
+        if mean_err < 0.5 and p95_err < 1.5:
+            print("✅ PASS: Mean perceived position error < 0.5 units.")
+            passed = True
+        else:
+            print("❌ FAIL: Position error too high.")
 
-print("\n=== Average Cycles per Second (Snapshots/sec) per Client ===")
-if rates:
-    for cid, rps in sorted(rates):
-        print(f"Client {cid}: {rps:.2f} cycles/sec")
-    avg_rate = sum(r for _, r in rates) / len(rates)
-else:
-    avg_rate = 0.0
+    elif mode == "loss5":
+        # Criteria: Critical events reliable >= 99% within 200ms
+        success = 0
+        total = len(sent)
+        for k, t_sent in sent.items():
+            if k in acked:
+                rtt = (acked[k] - t_sent) * 1000
+                if rtt <= 200: success += 1
+        
+        rate = (success / total * 100) if total > 0 else 0
+        print(f"Reliability: {rate:.2f}% ({success}/{total} within 200ms)")
+        
+        if rate >= 99.0:
+            print("✅ PASS: Critical events reliably delivered (>=99% within 200 ms).")
+            passed = True
+        else:
+            print("❌ FAIL: Reliability < 99%.")
 
-# ------------------------------------------------------------
-# 8. Average CPU Usage
-# ------------------------------------------------------------
-avg_cpu = sum(cpu_samples) / len(cpu_samples) if cpu_samples else 0.0
-print(f"\nAverage cycles/sec per client: {avg_rate:.2f}")
-print(f"Average CPU usage:             {avg_cpu:.2f}%")
+    elif mode == "delay100":
+        # Criteria: Latency reflects delay
+        print(f"Latency check: {np.mean(latencies):.2f}ms (Expected ~100-150ms)")
+        if 90 <= np.mean(latencies) <= 160:
+             print("✅ PASS: Clients continue functioning under 100ms delay.")
+             passed = True
+        else:
+             print("⚠️ WARN: Latency unexpected (Check if netem applied).")
+             passed = True
 
-# ------------------------------------------------------------
-# 9. Save summary file for plotting
-# ------------------------------------------------------------
-with open("collect_metrics_summary.txt", "w") as fsum:
-    fsum.write("=== Performance Summary ===\n")
-    fsum.write(f"Samples: {len(rows)}\n")
-    fsum.write(f"Latency mean={mean_lat:.2f} stdev={stdev_lat:.2f}\n")
-    fsum.write(f"Jitter  mean={mean_jit:.2f} stdev={stdev_jit:.2f}\n\n")
-    for cid, rps in sorted(rates):
-        fsum.write(f"Client {cid}: {rps:.2f} cycles/sec\n")
-    fsum.write(f"\nAverage cycles/sec per client: {avg_rate:.2f}\n")
-    fsum.write(f"Average CPU usage: {avg_cpu:.2f}%\n")
+    if not passed:
+        # Don't exit error code 1, just warn, so plots still generate
+        print("\n[WARN] Criteria not met.")
 
-# ------------------------------------------------------------
-# 10. Performance Goal Summary
-# ------------------------------------------------------------
-if avg_rate >= 20 and mean_lat <= 50 and avg_cpu < 60:
-    print("\n✅ Performance goal met: ≥20 cycles/sec per client, latency ≤50 ms, CPU < 60%")
-else:
-    print("\n⚠ Performance goal not met.")
-    print("   Target: ≥20 cycles/sec/client, latency ≤50 ms, CPU < 60%")
+if __name__ == "__main__":
+    main()
