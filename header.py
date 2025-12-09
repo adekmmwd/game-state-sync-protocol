@@ -24,6 +24,7 @@ MSG_SNAPSHOT_ACK = 8
 
 #events
 MSG_ACQUIRE_EVENT =  9 
+MSG_ACQUIRE_ACK = 13
 
 #termination
 MSG_END_GAME   = 10

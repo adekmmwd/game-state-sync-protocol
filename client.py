@@ -5,16 +5,7 @@ import time
 import random
 from collections import deque
 from enum import Enum, auto
-from header import (
-    make_packet, parse_packet,
-    MSG_JOIN_REQ, MSG_JOIN_ACK,
-    MSG_READY_REQ, MSG_READY_ACK,
-    MSG_SNAPSHOT_FULL, MSG_SNAPSHOT_DELTA,
-    MSG_SNAPSHOT_ACK, MSG_ACQUIRE_EVENT,
-    MSG_END_GAME,
-    MSG_LEADERBOARD  # <-- FIX 1: Import the correct game-over message
-)
-
+from header import *
 
 class ClientState(Enum):
     WAIT_FOR_JOIN = 1
@@ -33,12 +24,13 @@ START_TIMEOUT = 2.0
 
 class ClientHeaders:
     def __init__(self, color="red", position=(0, 0)):
-        # FIX 2: We will store the server-assigned ID here
+      
         self.my_id = None
         self.color = color
         self.position = position
         self.score = 0
         self.start_time = None
+        
 
     def start_timer(self):
         self.start_time = time.time()
@@ -55,12 +47,14 @@ class ClientFSM:
         self.state = ClientState.WAIT_FOR_JOIN
         self.grid = [[0 for _ in range(20)] for _ in range(20)]
         self.last_snapshot_id = 0
-        self.my_id = None  # <-- FIX 2: Store the server-assigned ID
+        self.my_id = None  
+        
 
         self.last_send_time = 0
         self.last_ack_time = 0
         self.last_acquire_time = 0
         self.last_snapshot = 0
+        self.last_acquire_request={}
         self.snapshot_buffer = deque(maxlen=10)
         self.recent_transition = 0
         self.pending_acquire = None
@@ -77,18 +71,19 @@ class ClientFSM:
         self.sock.sendto(packet, self.server_addr)
 
     def recv_packet(self, block=True):
-        """Receive and parse a packet, returns (header, payload) or (None, None)."""
+     
         try:
             data, _ = self.sock.recvfrom(4096)
+            pkt_len = len(data) 
             header, payload = parse_packet(data)
-            return header, payload
+            return header, payload, pkt_len
         except (socket.timeout, BlockingIOError):
             if block:
                 return None, None
             else:
                 raise TimeoutError
         except Exception as e:
-            print(f"⚠️ Error while parsing packet: {e}")
+            print(f"Error while parsing packet: {e}")
             return None, None
 
     def run(self):
@@ -113,14 +108,13 @@ class ClientFSM:
 
         if self.recent_transition or now - self.last_send_time >= JOIN_RESEND:
             self.recent_transition = 0
-            # FIX 3: Send an empty payload. Server ignores it.
             self.send_packet(MSG_JOIN_REQ, payload=b"")
             print("Sent JOIN_REQ")
             self.last_send_time = now
 
         header, payload = self.recv_packet()
         if header and header["msg_type"] == MSG_JOIN_ACK:
-            # FIX 2: Client MUST read the ID the server assigns
+     
             try:
                 payload_dict = json.loads(payload.decode())
                 self.my_id = payload_dict.get("player_id")
@@ -129,8 +123,8 @@ class ClientFSM:
                     self.running = False
                     return
 
-                self.headers.my_id = self.my_id  # Store it in the headers object
-                print(f"✓ JOIN_ACK received. Server assigned me ID: {self.my_id}")
+                self.headers.my_id = self.my_id
+                print(f"JOIN_ACK received. ID: {self.my_id}")
                 self.transition(ClientState.WAIT_FOR_READY)
             except Exception as e:
                 print(f"Error parsing JOIN_ACK: {e}")
@@ -158,9 +152,9 @@ class ClientFSM:
         if header and header["msg_type"] == MSG_SNAPSHOT_FULL:
             snap_id = header["snapshot_id"]
             self.last_snapshot_id = snap_id
-            print(f"✓ Received full snapshot #{snap_id}")
+            print(f"Received full snapshot #{snap_id}")
             self.apply_full_snapshot(json.loads(payload.decode()))
-            # This is correct: sends snapshot_id in header, empty payload
+   
             self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snap_id)
             self.transition(ClientState.IN_GAME_LOOP)
 
@@ -168,10 +162,10 @@ class ClientFSM:
             self.recent_transition = 0
             # FIX 3: Send an empty payload.
             self.send_packet(MSG_READY_REQ, payload=b"")
-            print("Waiting for full snapshot...")
+            print("Waiting for full snapshot")
             self.last_send_time = now
 
-    import random
+
 
     def handle_game_loop(self):
         buffer = deque()
@@ -215,7 +209,7 @@ class ClientFSM:
                 self.pending_acquire = None
                 self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snapshot_id)
 
-            # ---- Handle Delta Snapshot ----
+          
             elif msg_type == MSG_SNAPSHOT_DELTA:
                 delta = json.loads(payload.decode())
                 self.apply_delta_snapshot(delta)
@@ -229,6 +223,14 @@ class ClientFSM:
                 self.last_ack_time = now
                 self.pending_acquire = None
                 self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snapshot_id)
+            
+            elif msg_type == MSG_ACQUIRE_ACK:
+                ack=json.loads(payload.decode())
+                if ack["x"]==self.last_acquire_request["x"] and ack["y"]==self.last_acquire_request["y"]:
+                    print(f"✓ Received ACK for ({ack['y']},{ack['x']})")
+                    self.pending_acquire = None 
+                    self.last_acquire_request = {}
+
 
             # ---- Handle Game Over / Leaderboard ----
             elif msg_type == MSG_LEADERBOARD:
@@ -253,13 +255,10 @@ class ClientFSM:
                 print(f"⚠️ Unrecognized message type {msg_type}")
                 continue
 
-        # ================================================================
-        # Step 3: handle acquire event (player action) — RANDOM timing
-        # ================================================================
+
         now = time.time()
 
-        # Randomized acquire timing: only send occasionally
-        # (roughly once every 3–8 seconds)
+        
         if not self.pending_acquire:
             if random.random() < (TICK / random.uniform(3, 8)):
                 x = random.randint(0, 19)
@@ -268,13 +267,21 @@ class ClientFSM:
                 payload = json.dumps(payload_dictionary).encode()
 
                 self.send_packet(MSG_ACQUIRE_EVENT, payload=payload)
-                print(f"📦 Sent ACQUIRE event ({x},{y})")
                 self.pending_acquire = payload
                 self.last_acquire_time = now
+                self.last_acquire_request={"x":x,"y":y}
+                print(f"📦 Sent ACQUIRE event ({x},{y}) AT {self.last_acquire_time}")
+        elif self.pending_acquire and now-self.last_acquire_time> ACQUIRE_RESEND:
+            payload_dictionary = {"x": self.last_acquire_request["x"], "y": self.last_acquire_request["y"]}
+            payload = json.dumps(payload_dictionary).encode()
+            self.last_acquire_time = now
+            self.send_packet(MSG_ACQUIRE_EVENT, payload=payload)
+            print(f"📦 Sent ACQUIRE event ({self.last_acquire_request['x']},{self.last_acquire_request['y']})")
+                
 
     def handle_game_over(self):
         print("🏁 Game Over! Finalizing session...")
-        # Server doesn't listen for this, but sending it is harmless.
+        
         self.send_packet(MSG_END_GAME, payload=b"ACK")
         print("✔️ Sent game over acknowledgment to server.")
         time.sleep(1)
@@ -291,11 +298,6 @@ class ClientFSM:
         if not hasattr(self, "grid"):
             print("⚠️ No base grid, ignoring delta snapshot.")
             return
-
-        # FIX 5: The server sends "changes", but your server's
-        # internal logic said "delta". I'll match the server's
-        # actual sent payload, which is "changes".
-        # (If you change the server to send "delta", change this back)
         changes_list = delta.get("changes")
         if changes_list is None:
             print("⚠️ Delta snapshot missing 'changes' key.")

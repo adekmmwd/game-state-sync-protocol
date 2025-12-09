@@ -1,51 +1,84 @@
-#!/usr/bin/env python3
 import pandas as pd
 import matplotlib.pyplot as plt
-import os
 import sys
-from pathlib import Path
+import glob
+import os
 
-results_dir = Path(sys.argv[1])
+results_dir = sys.argv[1] if len(sys.argv) > 1 else "results"
 
 data = []
-for csv_path in results_dir.rglob("metrics.csv"):
-    scenario = csv_path.parts[-3]
-    df = pd.read_csv(csv_path)
-    # Adjust column names to what your collect_metrics.py actually outputs
-    stats = {
-        'scenario': scenario,
-        'latency_mean': df['latency_ms'].mean(),
-        'latency_95': df['latency_ms'].quantile(0.95),
-        'jitter_mean': df['jitter_ms'].mean(),
-        'position_error_mean': df['perceived_position_error'].mean(),
-        'position_error_95': df['perceived_position_error'].quantile(0.95),
-        'bandwidth_kbps': df['bandwidth_per_client_kbps'].mean(),
-    }
-    data.append(stats)
 
-summary = pd.DataFrame(data)
+# Walk through all run directories
+for run_dir in glob.glob(f"{results_dir}/*/run*"):
+    csv_path = os.path.join(run_dir, "metrics.csv")
+    if not os.path.exists(csv_path):
+        continue
+    
+    parts = run_dir.split(os.sep)
+    scenario = parts[-2] # e.g., loss_5_wan
+    
+    try:
+        df = pd.read_csv(csv_path)
+        
+        # 1. Snapshot Latency Stats
+        snaps = df[df['metric_type'] == 'snapshot']
+        lat_mean = snaps['latency_ms'].mean() if not snaps.empty else 0
+        lat_95 = snaps['latency_ms'].quantile(0.95) if not snaps.empty else 0
+        
+        # 2. Reliability Stats
+        rels = df[df['metric_type'] == 'reliability']
+        rel_mean = rels['reliability_pct'].mean() if not rels.empty else 100
+        retry_mean = rels['retransmits'].mean() if not rels.empty else 0
 
-# Sort scenarios in the correct order
+        data.append({
+            'scenario': scenario,
+            'latency_mean': lat_mean,
+            'latency_95': lat_95,
+            'reliability': rel_mean,
+            'retransmits': retry_mean
+        })
+    except Exception as e:
+        print(f"Skipping {csv_path}: {e}")
+
+# Aggregate by scenario
+df_all = pd.DataFrame(data)
+if df_all.empty:
+    print("No data found to plot.")
+    sys.exit()
+
+summary = df_all.groupby('scenario').mean().reset_index()
+
+# Sort order
 order = ['baseline', 'loss_2_lan', 'loss_5_wan', 'delay_100ms']
 summary['scenario'] = pd.Categorical(summary['scenario'], categories=order, ordered=True)
 summary = summary.sort_values('scenario')
 
-# Plots (exactly what the project asks for)
-plt.figure(figsize=(10,6))
-plt.plot(summary['scenario'], summary['latency_mean'], marker='o', label='Mean latency')
-plt.plot(summary['scenario'], summary['latency_95'], marker='s', label='95th latency')
-plt.ylabel('Latency (ms)'); plt.title('Latency vs Network Condition')
-plt.legend(); plt.grid(); plt.savefig('results_latency.png')
+print("\n=== TEST RESULTS SUMMARY ===")
+print(summary)
 
-plt.figure(figsize=(10,6))
-plt.plot(summary['scenario'], summary['position_error_mean'], marker='o', label='Mean error')
-plt.plot(summary['scenario'], summary['position_error_95'], marker='s', label='95th error')
-plt.ylabel('Perceived Position Error (units)'); plt.title('Position Error vs Network Condition')
-plt.legend(); plt.grid(); plt.savefig('results_position_error.png')
+# --- PLOT 1: LATENCY ---
+plt.figure(figsize=(10, 6))
+plt.bar(summary['scenario'], summary['latency_mean'], yerr=summary['latency_95']-summary['latency_mean'], capsize=5)
+plt.title("Average Latency by Scenario (with 95th percentile error bars)")
+plt.ylabel("Latency (ms)")
+plt.grid(axis='y', alpha=0.5)
+plt.savefig(f"{results_dir}/plot_latency.png")
 
-plt.figure(figsize=(10,6))
-plt.bar(summary['scenario'], summary['bandwidth_kbps'])
-plt.ylabel('Bandwidth per client (kbps)'); plt.title('Bandwidth vs Network Condition')
-plt.savefig('results_bandwidth.png')
+# --- PLOT 2: RELIABILITY ---
+plt.figure(figsize=(10, 6))
+plt.plot(summary['scenario'], summary['reliability'], marker='o', color='green', linewidth=2)
+plt.title("Action Reliability (Success Rate)")
+plt.ylabel("Success %")
+plt.ylim(80, 105) # Focus on the top range
+plt.grid()
+plt.savefig(f"{results_dir}/plot_reliability.png")
 
-print("Summary plots saved: results_latency.png, results_position_error.png, results_bandwidth.png")
+# --- PLOT 3: RETRANSMISSIONS ---
+plt.figure(figsize=(10, 6))
+plt.bar(summary['scenario'], summary['retransmits'], color='orange')
+plt.title("Average Retransmissions per Run")
+plt.ylabel("Count")
+plt.grid(axis='y')
+plt.savefig(f"{results_dir}/plot_retransmits.png")
+
+print(f"\nPlots saved to {results_dir}/")
