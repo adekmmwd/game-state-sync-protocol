@@ -15,7 +15,7 @@ fi
 
 # 2. Configuration
 INTERFACE="lo"         # Use loopback for local testing
-RUN_DURATION=130        # Duration in seconds
+RUN_DURATION=130       # Duration in seconds
 CLIENTS=4
 OUT_DIR="results/${TEST_MODE}/run1"
 

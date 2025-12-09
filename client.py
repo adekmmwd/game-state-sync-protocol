@@ -18,7 +18,7 @@ class ClientState(Enum):
 TICK = 0.05
 JOIN_RESEND = 0.25
 READY_RESEND = 0.25
-ACQUIRE_RESEND = 0.15
+ACQUIRE_RESEND = 0.06
 START_TIMEOUT = 2.0
 
 
@@ -206,7 +206,7 @@ class ClientFSM:
                 )
                 self.last_snapshot_id = snapshot_id
                 self.last_ack_time = now
-                self.pending_acquire = None
+                #self.pending_acquire = None
                 self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snapshot_id)
 
           
@@ -221,12 +221,12 @@ class ClientFSM:
                 )
                 self.last_snapshot_id = snapshot_id
                 self.last_ack_time = now
-                self.pending_acquire = None
+                #self.pending_acquire = None
                 self.send_packet(MSG_SNAPSHOT_ACK, snapshot_id=snapshot_id)
             
             elif msg_type == MSG_ACQUIRE_ACK:
                 ack=json.loads(payload.decode())
-                if ack["x"]==self.last_acquire_request["x"] and ack["y"]==self.last_acquire_request["y"]:
+                if self.last_acquire_request and ack["x"]==self.last_acquire_request["x"] and ack["y"]==self.last_acquire_request["y"]:
                     print(f"✓ Received ACK for ({ack['x']},{ack['y']}) recv_time={time.time()}")
                     self.pending_acquire = None 
                     self.last_acquire_request = {}

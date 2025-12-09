@@ -42,7 +42,7 @@ class GameServer:
         self.ready_count = 0
 
         # Time fields
-        self.interval = 0.04  # 20 ticks per second
+        self.interval = 0.04  
         self.join_time_gap_allowed = 10
         self.join_start_time = time.time()
         self.game_start_time = 0
