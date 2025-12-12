@@ -1,0 +1,7 @@
+Test: delay100
+Latency: Mean=95.37, Median=101.76, 95th=110.93
+Jitter: Mean=13.22, Median=5.96, 95th=15.66
+Error: Mean=1.4251, Median=0.0000, 95th=10.6301
+Bandwidth (Avg Total): 257.57 kbps
+CPU: 1.55%
+Update Rate: 24.37 Hz
