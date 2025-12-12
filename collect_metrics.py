@@ -10,6 +10,7 @@ def parse_client_logs(log_dir):
     acked_events = {}  
     client_update_counts = {} 
     client_positions=[]
+    clients_received_snapshots_counter=0
    
 
     client_files = [f for f in os.listdir(log_dir) if f.startswith("client") and f.endswith("_log.txt")]
@@ -66,6 +67,7 @@ def parse_client_logs(log_dir):
                             "packet_size":packet_size
                        
                         })
+                        clients_received_snapshots_counter+=1
                     except Exception as e: 
                         continue
                 
@@ -90,11 +92,12 @@ def parse_client_logs(log_dir):
                     m = re.search(r'\((\d+),(\d+)\).*recv_time=(\d+\.\d+)', line)
                     if m: acked_events[(c_id, int(m.group(1)), int(m.group(2)))] = float(m.group(3))
 
-    return metrics_rows, sent_events, acked_events, client_update_counts,client_positions
+    return metrics_rows, sent_events, acked_events, client_update_counts,client_positions,clients_received_snapshots_counter
 
 def parse_server_logs(log_dir):
     metrics_rows = []
     server_positions=[]
+    snapshots_counter=0
 
    
     server_file = [f for f in os.listdir(log_dir) if f.startswith("server") and f.endswith("_log.txt")]
@@ -145,9 +148,15 @@ def parse_server_logs(log_dir):
                         })
                     except Exception as e: 
                         continue
+                
+                elif "SNAPSHOT_SEND" in line:
+                    try:
+                        snapshots_counter+=1
 
+                    except Exception as e: 
+                        continue
     
-    return metrics_rows,server_positions
+    return metrics_rows,server_positions,snapshots_counter
 
 def calculate_update_rate(client_timestamps):
     rates = []
@@ -167,9 +176,9 @@ def main():
     log_dir = sys.argv[1]
     mode = sys.argv[2]
     
-    rows, sent, acked, updates,client_positions = parse_client_logs(log_dir)
+    rows, sent, acked, updates,client_positions,c_received_snaps = parse_client_logs(log_dir)
     rows = sorted(rows, key=lambda r: r["server_timestamp_ms"])
-    server_rows,server_positions=parse_server_logs(log_dir)
+    server_rows,server_positions,s_sent_snaps=parse_server_logs(log_dir)
     server_rows=sorted(server_rows, key=lambda r: r["cpu_usage_ts"])
 
 
@@ -232,11 +241,15 @@ def main():
         row['bandwidth'] = bandwidth
 
     if not rows:
-        print("\n❌ CRITICAL FAILURE: No metrics parsed.")
-        print("   1. Did the clients crash? Check client1_log.txt.")
-        print("   2. Did you use 'python -u' in the script? (Yes, the script does).")
-        print("   3. Did you add the print statements to client.py?")
+        print("\nNo metrics parsed.")
+
         return
+    
+    #Loss Rate 
+    if s_sent_snaps ==0:
+        loss_rate=0
+    else:
+        loss_rate= (1-(c_received_snaps/s_sent_snaps))*100
 
     # Write CSV
     csv_path = os.path.join(log_dir, "metrics.csv")
@@ -273,7 +286,7 @@ def main():
     cpu_mean = np.mean(cpu_usage) if cpu_usage else 0
 
     print("\n" + "="*50)
-    print(f"RESULTS SUMMARY: {mode.upper()}")
+    print(f"Results : {mode.upper()}")
     print("="*50)
 
     if latencies:
@@ -304,27 +317,30 @@ def main():
         f.write(f"Error: Mean={error_mean:.4f}, Median={error_med:.4f}, 95th={error_95:.4f}\n")
         f.write(f"Bandwidth (Avg Total): {avg_bw:.2f} kbps\n")
         f.write(f"CPU: {cpu_mean:.2f}%\n")
-        f.write(f"Update Rate: {clients_updates:.2f} Hz\n")
+        f.write(f"Update Rate: {clients_updates:.2f} ups\n")
+        f.write(f"Loss Rate: {loss_rate:.2f} %\n")
+
+
     print(f"[INFO] Stats saved to {os.path.join(log_dir, 'stats_summary.txt')}")
     
     passed = False
     
     if mode == "baseline":
         if clients_updates >= 15 and latency_mean <= 50 and cpu_mean < 60:
-            print("✅ PASS: Server sustains ~20 updates/sec; avg latency <= 50 ms.;cpu usage<60%")
+            print("Server sustains ~20 updates/sec; avg latency <= 50 ms.;cpu usage<60%")
             passed = True
         else:
-            print(f"❌ FAIL: Latency {latency_mean:.1f}ms (>50) or Hz {clients_updates:.1f} (<20) or cpu usage>60%.")
+            print(f"Latency {latency_mean:.1f}ms (>50) or Hz {clients_updates:.1f} (<20) or cpu usage>60%.")
 
     elif mode == "loss2":
         print(f"Mean Pos Error: {error_mean:.2f}")
         print(f"95% Pos Error:  {error_95:.2f}")
         
         if error_mean < 0.5 and error_95 < 1.5:
-            print("✅ PASS: Mean perceived position error < 0.5 units.")
+            print("Mean perceived position error < 0.5 units.")
             passed = True
         else:
-            print("❌ FAIL: Position error too high.")
+            print("Position error too high.")
 
     elif mode == "loss5":
         success = 0
@@ -338,18 +354,18 @@ def main():
         print(f"Reliability: {rate:.2f}% ({success}/{total} within 200ms)")
         
         if rate >= 99.0:
-            print("✅ PASS: Critical events reliably delivered (>=99% within 200 ms).")
+            print("Critical events reliably delivered (>=99% within 200 ms).")
             passed = True
         else:
-            print("❌ FAIL: Reliability < 99%.")
+            print("Reliability < 99%.")
 
     elif mode == "delay100":
         print(f"Latency check: {latency_mean:.2f}ms (Expected ~100-150ms)")
         if 90 <= latency_mean <= 160:
-             print("✅ PASS: Clients continue functioning under 100ms delay.")
+             print("Clients continue functioning under 100ms delay.")
              passed = True
         else:
-             print("⚠️ WARN: Latency unexpected (Check if netem applied).")
+             print(" Latency unexpected (Check if netem applied).")
              passed = True
 
     if not passed:

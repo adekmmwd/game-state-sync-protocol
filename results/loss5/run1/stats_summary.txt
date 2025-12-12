@@ -1,7 +1,8 @@
 Test: loss5
-Latency: Mean=1.27, Median=1.25, 95th=1.85
-Jitter: Mean=0.39, Median=0.28, 95th=1.04
-Error: Mean=0.0407, Median=0.0000, 95th=0.0000
-Bandwidth (Avg Total): 11.60 kbps
-CPU: 1.18%
-Update Rate: 23.25 Hz
+Latency: Mean=1.26, Median=1.25, 95th=1.82
+Jitter: Mean=0.38, Median=0.30, 95th=0.97
+Error: Mean=0.1054, Median=0.0000, 95th=0.0000
+Bandwidth (Avg Total): 11.81 kbps
+CPU: 1.39%
+Update Rate: 23.21 ups
+Loss Rate: 4.72 %

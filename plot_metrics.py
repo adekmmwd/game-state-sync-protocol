@@ -36,7 +36,7 @@ def plot(log_dir):
     plt.grid(True, linestyle='--', alpha=0.6)
     plt.savefig(os.path.join(log_dir, "plot_latency.png"))
     plt.close()
-    print(f"[Plotter] Saved plot_latency.png")
+
 
     # 2. JITTER PLOT (Histogram)
     plt.figure(figsize=(10, 5))
@@ -50,14 +50,14 @@ def plot(log_dir):
     print(f"[Plotter] Saved plot_jitter.png")
 
     # 3. POSITION ERROR PLOT (Requirement for 2% Loss)
-    if 'position_error' in df.columns and df['position_error'].sum() > 0:
+    if 'perceived_position_error' in df.columns and df['perceived_position_error'].sum() > 0:
         plt.figure(figsize=(10, 5))
         for cid in df['client_id'].unique():
             subset = df[df['client_id'] == cid]
-            plt.plot(subset['time_sec'], subset['position_error'], label=f'Client {cid}', marker='.', linestyle='none', alpha=0.5)
+            plt.plot(subset['time_sec'], subset['perceived_position_error'], label=f'Client {cid}', marker='.', linestyle='none', alpha=0.5)
         
         # Add a line for the Mean Error
-        mean_err = df['position_error'].mean()
+        mean_err = df['perceived_position_error'].mean()
         plt.axhline(y=mean_err, color='r', linestyle='-', label=f'Mean ({mean_err:.2f})')
         
         plt.title("Perceived Position Error vs Time")
@@ -65,9 +65,9 @@ def plot(log_dir):
         plt.ylabel("Error (Euclidean Distance)")
         plt.legend()
         plt.grid(True, linestyle='--', alpha=0.6)
-        plt.savefig(os.path.join(log_dir, "plot_position_error.png"))
+        plt.savefig(os.path.join(log_dir, "plot_perceived_position_error.png"))
         plt.close()
-        print(f"[Plotter] Saved plot_position_error.png")
+        print(f"[Plotter] Saved plot_perceived_position_error.png")
     else:
         print("[Plotter] No Position Error data found (or error is 0). Skipping error plot.")
 
