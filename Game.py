@@ -1,5 +1,3 @@
-# Game.py — Pygame GUI wrapper for your existing client.py
-# Uses your server.py when in server mode
 
 import socket
 import threading
@@ -9,20 +7,15 @@ import argparse
 import pygame
 import sys
 
-# -----------------------------
-# Import your existing client module
-# -----------------------------
 try:
     from client import ClientFSM, ClientState, ClientHeaders, MSG_ACQUIRE_EVENT
     USE_YOUR_CLIENT = True
-    print("✓ Using your client.py module")
+    print("Using your client.py module")
 except ImportError:
-    print("⚠️ Could not import client.py, using fallback")
+    print("Could not import client.py, using fallback")
     USE_YOUR_CLIENT = False
 
-# -----------------------------
-# Simple GUI Client wrapper
-# -----------------------------
+
 class GridClashGUI:
     def __init__(self, server_host):
         self.server_host = server_host
@@ -48,7 +41,7 @@ class GridClashGUI:
             print("Fallback mode - no FSM available")
         
     def run_fsm_client(self):
-        """Run your existing FSM client in a thread"""
+        
         try:
             # Create socket and client as in your client.py
             server_address = (self.server_host, self.port)
@@ -67,7 +60,7 @@ class GridClashGUI:
             traceback.print_exc()
     
     def get_game_state(self):
-        """Get current state from FSM for GUI display"""
+       
         if not USE_YOUR_CLIENT or not hasattr(self, 'fsm'):
             return self.grid, None, 0, ClientState.WAIT_FOR_JOIN, None
         
@@ -117,7 +110,6 @@ class GridClashGUI:
             return self.grid, self.player_id, self.score, ClientState.WAIT_FOR_JOIN, self.leaderboard
     
     def send_acquire(self, x, y):
-        """Send cell acquisition request through FSM"""
         if not USE_YOUR_CLIENT or not hasattr(self, 'fsm'):
             print(f"Cannot acquire cell: FSM not available")
             return False
@@ -130,7 +122,7 @@ class GridClashGUI:
             payload = json.dumps(payload_dictionary).encode()
             
             self.fsm.send_packet(MSG_ACQUIRE_EVENT, payload=payload)
-            print(f"📤 GUI: Requesting cell ({x}, {y})")
+            print(f"GUI: Requesting cell ({x}, {y})")
             return True
             
         except Exception as e:
@@ -138,7 +130,7 @@ class GridClashGUI:
             return False
     
     def send_ready(self):
-        """Send ready signal"""
+        
         if not USE_YOUR_CLIENT or not hasattr(self, 'fsm'):
             print("Cannot send ready: FSM not available")
             return False
@@ -146,20 +138,17 @@ class GridClashGUI:
         try:
             if self.fsm.state == ClientState.WAIT_FOR_READY:
                 self.fsm.transition(ClientState.WAIT_FOR_STARTGAME)
-                print("✓ GUI: Sent ready signal")
+                print("GUI: Sent ready signal")
                 return True
             return False
         except:
             return False
 
-# -----------------------------
-# Pygame GUI with Actual Leaderboard Display
-# -----------------------------
+
 def run_pygame_gui(gui_client):
-    """Run the Pygame GUI"""
     pygame.init()
     
-    # Window setup
+
     WINDOW_WIDTH = 1300
     WINDOW_HEIGHT = 800
     screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
@@ -321,7 +310,7 @@ def run_pygame_gui(gui_client):
             text = small_font.render(line, True, color)
             screen.blit(text, (panel_x + 10, panel_y + 10 + i * 22))
         
-        # ACTUAL LEADERBOARD DISPLAY - When state is GAME_OVER
+       
         if state == ClientState.GAME_OVER:
             # Dark overlay
             overlay = pygame.Surface((current_width, current_height), pygame.SRCALPHA)
@@ -412,7 +401,7 @@ def run_pygame_gui(gui_client):
                     
                     entry_y += 40
                 
-                # Show current player's position if not in top 8
+                # Show current player's position
                 if player_id and all(str(player_id) != str(pid) for pid, _ in sorted_leaderboard[:max_display]):
                     all_sorted = sorted(leaderboard_data.items(), 
                                       key=lambda x: x[1], 
@@ -451,11 +440,7 @@ def run_pygame_gui(gui_client):
     pygame.quit()
     print("GUI closed")
 
-# -----------------------------
-# Run your server directly
-# -----------------------------
 def run_your_server():
-    """Run your existing server.py"""
     try:
         from server import GameServer
         print("=" * 70)
@@ -469,9 +454,7 @@ def run_your_server():
     except KeyboardInterrupt:
         print("\nServer stopped by user")
 
-# -----------------------------
-# Main function
-# -----------------------------
+
 def main():
     parser = argparse.ArgumentParser(description="Grid Clash Game")
     parser.add_argument("--mode", choices=["server", "client"], required=True,

@@ -142,7 +142,7 @@ class ClientFSM:
 
         header, payload,packet_len = self.recv_packet()
         if header and header["msg_type"] == MSG_READY_ACK:
-            print("✓ READY_ACK received. Waiting for start snapshot.")
+            print("READY_ACK received. Waiting for start snapshot.")
             self.transition(ClientState.WAIT_FOR_STARTGAME)
 
     def handle_start_game(self):
@@ -193,7 +193,7 @@ class ClientFSM:
                     print(f"⚠️ Ignored outdated snapshot #{snapshot_id} (last={self.last_snapshot_id})")
                     continue
 
-            # ---- Handle Full Snapshot ----
+            
             if msg_type == MSG_SNAPSHOT_FULL:
                 state = json.loads(payload.decode())
                 self.apply_full_snapshot(state)
@@ -230,25 +230,25 @@ class ClientFSM:
 
 
             elif msg_type == MSG_LEADERBOARD:
-                print("🏁 Game Over message received (Leaderboard)")
+                print("Game Over message received (Leaderboard)")
 
                 try:
                     lb = json.loads(payload.decode())
                     results = lb.get("results", [])
-                    print("🏆 Leaderboard:")
+                    print("Leaderboard:")
                     for entry in results:
                         rank = entry.get("rank")
                         pid = entry.get("player_id")
                         score = entry.get("score")
                         print(f"  {rank}. player {pid} — score {score}")
                 except Exception as e:
-                    print(f"⚠️ Failed to parse leaderboard payload: {e}")
+                    print(f"Failed to parse leaderboard payload: {e}")
 
                 self.transition(ClientState.GAME_OVER)
                 return
 
             else:
-                print(f"⚠️ Unrecognized message type {msg_type}")
+                print(f"Unrecognized message type {msg_type}")
                 continue
 
 
@@ -267,7 +267,7 @@ class ClientFSM:
                     self.pending_acquire = payload
                     self.last_acquire_time = now
                     self.last_acquire_request={"x":x,"y":y,"time":time.time()}
-                    print(f"📦 Sent ACQUIRE event ({x},{y}) AT {self.last_acquire_time}")
+                    print(f"Sent ACQUIRE event ({x},{y}) AT {self.last_acquire_time}")
                     print(f"POS_CLIENT x={x} y={y} ts={time.time()}")
         
         elif self.pending_acquire and now-self.last_acquire_time> ACQUIRE_RESEND:
@@ -275,18 +275,18 @@ class ClientFSM:
             payload = json.dumps(payload_dictionary).encode()
             self.last_acquire_time = now
             self.send_packet(MSG_ACQUIRE_EVENT, payload=payload)
-            print(f"📦 Sent ACQUIRE event ({self.last_acquire_request['x']},{self.last_acquire_request['y']})")
+            print(f"Sent ACQUIRE event ({self.last_acquire_request['x']},{self.last_acquire_request['y']})")
                 
 
     def handle_game_over(self):
-        print("🏁 Game Over! Finalizing session...")
+        print("Game Over! Finalizing session...")
         
         self.send_packet(MSG_END_GAME, payload=b"ACK")
         print("✔️ Sent game over acknowledgment to server.")
         time.sleep(1)
         self.sock.close()
         self.running = False
-        print("🔒 Client session ended.")
+        print("Client session ended.")
 
     def apply_full_snapshot(self, state):
         self.grid = state["grid"]
@@ -297,11 +297,11 @@ class ClientFSM:
 
     def apply_delta_snapshot(self, delta):
         if not hasattr(self, "grid"):
-            print("⚠️ No base grid, ignoring delta snapshot.")
+            print("No base grid, ignoring delta snapshot.")
             return
         changes_list = delta.get("changes")
         if changes_list is None:
-            print("⚠️ Delta snapshot missing 'changes' key.")
+            print("Delta snapshot missing 'changes' key.")
             return
 
         for (y, x, new_val) in changes_list:
@@ -313,7 +313,6 @@ class ClientFSM:
 
 
 def main():
-    # This port is now correct and matches the server
     server_address = ("127.0.0.1", 8888)
     clientSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     clientSocket.settimeout(TICK)

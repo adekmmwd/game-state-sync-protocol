@@ -33,7 +33,7 @@ class GameServer:
         self.server_socket = socket(AF_INET, SOCK_DGRAM)
         self.server_socket.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
         self.server_socket.bind(('', 8888))
-        self.server_socket.setblocking(False)  # <-- CRITICAL: Set to non-blocking
+        self.server_socket.setblocking(False)
         self.state = ServerState.WAITING_FOR_JOIN
         self.seq_num = 0
 
@@ -57,32 +57,25 @@ class GameServer:
         
         print("Server started. Waiting for players...")
 
-    # --- Main Loop ---
-
     def run(self):
-        """Main server loop."""
         while True:
             self.run_one_frame()
-            # Sleep to prevent 100% CPU usage
             time.sleep(0.001)
 
     def run_one_frame(self):
        
         self.process_network_events()
         
-        # --- State-specific time-based logic ---
         if self.state == ServerState.WAITING_FOR_JOIN:
             self.update_waiting_for_join()
         
         elif self.state == ServerState.WAITING_FOR_INIT:
-            # This is a transitional state
             self.run_state_waiting_for_init()
         
         elif self.state == ServerState.GAME_LOOP:
             self.update_game_loop()
         
         elif self.state == ServerState.GAME_OVER:
-            # This is also a transitional state
             self.run_state_game_over()
 
 
@@ -97,14 +90,13 @@ class GameServer:
                     data, addr = sock.recvfrom(2048)
                     self.handle_packet(data, addr)
                 except BlockingIOError:
-                    # No more data to read from the buffer
+                    
                     break
                 except Exception as e:
                     print(f"Socket read error: {e}")
                     break
 
     def handle_packet(self, data, addr):
-        """Route an incoming packet to the correct handler based on state."""
         try:
             header, payload = parse_packet(data)
             msg_type = header["msg_type"]
@@ -132,8 +124,6 @@ class GameServer:
 
         except Exception as e:
             print(f"Error handling packet: {e}")
-
-    # --- Packet Handlers (Moved from async functions) ---
 
     def handle_join_req(self, addr):
         if addr in self.players:
@@ -202,8 +192,6 @@ class GameServer:
 
         time_elapsed = time.time() - self.join_start_time
         #time_condition = (time_elapsed >= self.join_time_gap_allowed and len(self.players) > 1)
-        
-        # Condition 2: Half the players are ready (and we have at least 1)
         ready_condition = (len(self.players) >= 4 and self.ready_count == 4)
         time_condition = False  # Disable time condition for testing
         for address, player in self.players.items():
@@ -218,7 +206,6 @@ class GameServer:
             self.state = ServerState.WAITING_FOR_INIT
 
     def run_state_waiting_for_init(self):
-        """Send the initial snapshot to all players."""
         print("Sending initial snapshot...")
 
         self.current_snapshot = {
@@ -359,11 +346,8 @@ class GameServer:
             self.server_socket.sendto(leaderboard_packet, player.address)
             print(f"Leaderboard sent to Player {player.id}")
 
-        # --- Reset server state for the next round ---
 
     def run_state_game_over(self):
-        print("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaah kadshlkfasdfh",flush=True)
-        """Calculate, send leaderboard, and reset the server."""
         print("\n--- GAME OVER ---")
 
         end_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -388,7 +372,6 @@ class GameServer:
         self.reset_server_state()
 
     def reset_server_state(self):
-        """Clear all game variables to prepare for a new session."""
         print("Game session ended. Server ready for next round.")
         
         self.players.clear()
@@ -400,12 +383,9 @@ class GameServer:
         self.previous_snapshot = {}
         self.game_running = False
         
-        # Reset state back to WAITING_FOR_JOIN
         self.state = ServerState.WAITING_FOR_JOIN
         self.join_start_time = time.time()
 
-
-# --- Entry Point ---
 
 if __name__ == "__main__":
     server = GameServer()

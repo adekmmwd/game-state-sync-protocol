@@ -33,8 +33,6 @@ MSG_TERMINATE  = 12
 
 
 
-# HEADER PACKING / UNPACKING
-
 
 def pack_header(msg_type, snapshot_id=0, seq_num=0, payload_len=0):
 
