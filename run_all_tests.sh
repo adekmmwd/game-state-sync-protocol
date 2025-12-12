@@ -1,21 +1,17 @@
 #!/bin/bash
-# ============================================================
-#  Universal Test Script (Baseline, Loss, Delay)
-#  Project 2: Multiplayer Game State Synchronization
-# ============================================================
 
 set -e
 
-# 1. Read Mode
+
 TEST_MODE=$1
 if [ -z "$TEST_MODE" ]; then
     echo "Usage: sudo ./run_tests.sh [baseline|loss2|loss5|delay100]"
     exit 1
 fi
 
-# 2. Configuration
-INTERFACE="lo"         # Use loopback for local testing
-RUN_DURATION=130       # Duration in seconds
+
+INTERFACE="lo"         
+RUN_DURATION=130      
 CLIENTS=4
 OUT_DIR="results/${TEST_MODE}/run1"
 
@@ -24,7 +20,12 @@ echo "[INFO] Cleaning old results in ${OUT_DIR}..."
 rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 
-# 3. Setup Network Conditions (Netem)
+RESULTS_DIR="results/$TEST_MODE/run$i"
+mkdir -p "$RESULTS_DIR"
+echo "[INFO] Starting Packet Capture..."
+tshark -i lo -f "udp port 8888" -w "$RESULTS_DIR/traffic.pcap" > /dev/null 2>&1 &
+TSHARK_PID=$!
+
 echo "[INFO] Setting up network conditions on ${INTERFACE}..."
 tc qdisc del dev ${INTERFACE} root 2>/dev/null || true
 
@@ -50,7 +51,7 @@ case ${TEST_MODE} in
         ;;
 esac
 
-# 4. Start Capture (Optional, fails gracefully if no tshark)
+
 if command -v tshark &> /dev/null; then
     echo "[INFO] Starting packet capture..."
     tshark -i ${INTERFACE} -f "udp port 8888" -w "${OUT_DIR}/capture.pcap" > /dev/null 2>&1 &
@@ -59,43 +60,42 @@ else
     echo "[WARN] tshark not found. Skipping pcap."
 fi
 
-# 5. Launch Server
 echo "[INFO] Launching Server..."
-# Note: -u is CRITICAL. It stops Python from buffering logs.
+
 python3 -u server.py > "${OUT_DIR}/server_log.txt" 2>&1 &
 SERVER_PID=$!
-sleep 2  # Give server time to bind port
+sleep 2  
 
-# 6. Launch Clients
+
 for i in $(seq 1 ${CLIENTS}); do
     echo "[INFO] Launching Client ${i}..."
-    # Note: We pass --id just in case, though your code might ignore it.
     python3 -u client.py > "${OUT_DIR}/client${i}_log.txt" 2>&1 &
     CLIENT_PIDS+=($!)
-    sleep 0.5 # Stagger start slightly like the old script
+    sleep 0.5 
 done
 
-# 7. Run Test
 echo "[INFO] Running test for ${RUN_DURATION} seconds..."
 sleep ${RUN_DURATION}
 
-# 8. Cleanup
+
 echo "[INFO] Stopping processes..."
 kill ${SERVER_PID} 2>/dev/null || true
 kill ${CLIENT_PIDS[@]} 2>/dev/null || true
 if [ ! -z "$CAPTURE_PID" ]; then kill $CAPTURE_PID 2>/dev/null || true; fi
+sudo chown -R $USER:$USER "$RESULTS_DIR"
 
-# Remove Netem rules
 echo "[INFO] Resetting network rules..."
 tc qdisc del dev ${INTERFACE} root 2>/dev/null || true
 
-# 9. Analysis
+
 echo "==========================================================="
 echo "[INFO] Collecting metrics from ${OUT_DIR}..."
 python3 collect_metrics.py "${OUT_DIR}" "${TEST_MODE}"
 
 echo "[INFO] Generating plots..."
 python3 plot_metrics.py "${OUT_DIR}"
+
+sudo kill $TSHARK_PID
 
 echo "=== Test Complete ==="
 echo "Logs and Plots saved to: ${OUT_DIR}"

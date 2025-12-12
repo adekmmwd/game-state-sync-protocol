@@ -5,6 +5,7 @@ import enum
 import time
 import json
 import numpy as np
+import psutil
 from header import *
 
 
@@ -294,6 +295,10 @@ class GameServer:
         full_payload = json.dumps(self.current_snapshot).encode()
         full_packet = make_packet(MSG_SNAPSHOT_FULL, payload=full_payload,
                                   snapshot_id=server_snapshot_id, seq_num=self.seq_num)
+        
+        packet_ts = unpack_header(full_packet)['timestamp'] 
+        cpu = psutil.cpu_percent()
+        print(f"CPU_USAGE percent={cpu} ts={packet_ts}")
 
         for player in self.players.values():
             diff = server_snapshot_id - player.last_snapshot_id
@@ -311,6 +316,7 @@ class GameServer:
                                            snapshot_id=server_snapshot_id, seq_num=self.seq_num)
 
                 self.server_socket.sendto(delta_packet, player.address)
+                
                 # print(f"Sent DELTA snapshot to Player {player.id}")
             else:
                 

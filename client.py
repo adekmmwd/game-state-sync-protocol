@@ -74,17 +74,17 @@ class ClientFSM:
      
         try:
             data, _ = self.sock.recvfrom(4096)
-            pkt_len = len(data) 
+            packet_len = len(data) 
             header, payload = parse_packet(data)
-            return header, payload
+            return header, payload,packet_len
         except (socket.timeout, BlockingIOError):
             if block:
-                return None, None
+                return None, None,0
             else:
                 raise TimeoutError
         except Exception as e:
             print(f"Error while parsing packet: {e}")
-            return None, None
+            return None, None,0
 
     def run(self):
         print(f"client: starting...")
@@ -112,7 +112,7 @@ class ClientFSM:
             print("Sent JOIN_REQ")
             self.last_send_time = now
 
-        header, payload = self.recv_packet()
+        header, payload,packet_len = self.recv_packet()
         if header and header["msg_type"] == MSG_JOIN_ACK:
      
             try:
@@ -140,13 +140,13 @@ class ClientFSM:
             print("→ Sent READY_REQ")
             self.last_send_time = now
 
-        header, payload = self.recv_packet()
+        header, payload,packet_len = self.recv_packet()
         if header and header["msg_type"] == MSG_READY_ACK:
             print("✓ READY_ACK received. Waiting for start snapshot.")
             self.transition(ClientState.WAIT_FOR_STARTGAME)
 
     def handle_start_game(self):
-        header, payload = self.recv_packet()
+        header, payload,packet_len = self.recv_packet()
         now = time.time()
 
         if header and header["msg_type"] == MSG_SNAPSHOT_FULL:
@@ -173,9 +173,9 @@ class ClientFSM:
         # Step 1: drain all available packets into buffer
         while True:
             try:
-                header, payload = self.recv_packet(block=False)
+                header, payload,packet_len = self.recv_packet(block=False)
                 if header:
-                    buffer.append((header, payload))
+                    buffer.append((header, payload,packet_len))
             except TimeoutError:
                 break
             except Exception:
@@ -183,12 +183,11 @@ class ClientFSM:
 
         # Step 2: process all received packets
         while buffer:
-            header, payload = buffer.popleft()
+            header, payload,packet_len = buffer.popleft()
             now = time.time()
             msg_type = header["msg_type"]
             snapshot_id = header["snapshot_id"]
 
-            # ---- Ignore outdated or duplicate snapshots ----
             if msg_type in (MSG_SNAPSHOT_FULL, MSG_SNAPSHOT_DELTA):
                 if snapshot_id <= self.last_snapshot_id:
                     print(f"⚠️ Ignored outdated snapshot #{snapshot_id} (last={self.last_snapshot_id})")
@@ -201,9 +200,7 @@ class ClientFSM:
                 print(f"✓ Applied full snapshot #{snapshot_id}")
 
                 # Logging for the metrics collection script
-                print(
-                    f"SNAPSHOT recv_time={time.time()} server_ts={header['timestamp']} snapshot_id={snapshot_id} seq={header['seq_num']}"
-                )
+                print(f"SNAPSHOT recv_time={time.time()} server_ts={header['timestamp']} snapshot_id={snapshot_id} seq={header['seq_num']} bytes={packet_len}")
                 self.last_snapshot_id = snapshot_id
                 self.last_ack_time = now
                 #self.pending_acquire = None
@@ -216,9 +213,8 @@ class ClientFSM:
                 print(f"✓ Applied delta snapshot #{snapshot_id}")
 
                 # Logging for the metrics collection script
-                print(
-                    f"SNAPSHOT recv_time={time.time()} server_ts={header['timestamp']} snapshot_id={snapshot_id} seq={header['seq_num']}"
-                )
+                print(f"SNAPSHOT recv_time={time.time()} server_ts={header['timestamp']} snapshot_id={snapshot_id} seq={header['seq_num']} bytes={packet_len}" )
+             
                 self.last_snapshot_id = snapshot_id
                 self.last_ack_time = now
                 #self.pending_acquire = None
@@ -230,7 +226,7 @@ class ClientFSM:
                 if self.last_acquire_request and ack["x"]==self.last_acquire_request["x"] and ack["y"]==self.last_acquire_request["y"]:
                     print(f"✓ Received ACK for ({ack['x']},{ack['y']}) recv_time={time.time()}")
                     self.last_acquire_request = {}
-                self.pending_acquire = None 
+                    self.pending_acquire = None 
 
 
             elif msg_type == MSG_LEADERBOARD:
@@ -263,14 +259,16 @@ class ClientFSM:
             if random.random() < (TICK / random.uniform(3, 8)):
                 x = random.randint(0, 19)
                 y = random.randint(0, 19)
-                payload_dictionary = {"x": x, "y": y}
-                payload = json.dumps(payload_dictionary).encode()
+                if self.grid[y][x] ==0:
+                    payload_dictionary = {"x": x, "y": y}
+                    payload = json.dumps(payload_dictionary).encode()
 
-                self.send_packet(MSG_ACQUIRE_EVENT, payload=payload)
-                self.pending_acquire = payload
-                self.last_acquire_time = now
-                self.last_acquire_request={"x":x,"y":y,"time":time.time()}
-                print(f"📦 Sent ACQUIRE event ({x},{y}) AT {self.last_acquire_time}")
+                    self.send_packet(MSG_ACQUIRE_EVENT, payload=payload)
+                    self.pending_acquire = payload
+                    self.last_acquire_time = now
+                    self.last_acquire_request={"x":x,"y":y,"time":time.time()}
+                    print(f"📦 Sent ACQUIRE event ({x},{y}) AT {self.last_acquire_time}")
+                    print(f"POS_CLIENT x={x} y={y} ts={time.time()}")
         
         elif self.pending_acquire and now-self.last_acquire_time> ACQUIRE_RESEND:
             payload_dictionary = {"x": self.last_acquire_request["x"], "y": self.last_acquire_request["y"]}
@@ -295,7 +293,7 @@ class ClientFSM:
         self.last_snapshot_id = state["snapshot_id"]
         print(f"[FULL] Applied full snapshot #{self.last_snapshot_id}")
         # Placeholder for position error (Required for 2% Loss Test)
-        print(f"POSITION_ERR error=0.0 recv_time={time.time()}")
+        #print(f"POSITION_ERR error=0.0 recv_time={time.time()}")
 
     def apply_delta_snapshot(self, delta):
         if not hasattr(self, "grid"):
@@ -311,8 +309,7 @@ class ClientFSM:
 
         self.last_snapshot_id = delta["snapshot_id"]
         print(f"[DELTA] Applied {len(changes_list)} changes (snapshot #{self.last_snapshot_id})")
-        # Placeholder for position error (Required for 2% Loss Test)
-        print(f"POSITION_ERR error=0.0 recv_time={time.time()}")
+
 
 
 def main():
